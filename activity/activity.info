@@ -1,0 +1,8 @@
+[Activity]
+name = RpiCamera
+activity_version = 1
+bundle_id = org.sugarlabs.RPiCamera
+exec = sugar-activity3 activity.RPiCameraActivity
+icon = cam
+license = GPLv2+
+repository = https://github.com/44yu5h/RPiCameraActivity.git
