@@ -1,3 +1,7 @@
+flag = True  # False: for testing without camera
+
+import datetime
+import os
 import gi
 import cairo
 import numpy as np
@@ -5,7 +9,7 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib
 
 import _lists
-from picamera2 import Picamera2
+if flag: from picamera2 import Picamera2
 
 from sugar3.activity import activity
 from sugar3.graphics.toolbarbox import ToolbarBox
@@ -82,7 +86,7 @@ class RPiCameraActivity(activity.Activity):
 
         # home screen
         self.radiobutton_cb(None, 'gpio')
-        GLib.timeout_add(1000, self.update_preview)
+        if flag: GLib.timeout_add(1000, self.update_preview)
 
     #==========================================================================
     #SECTION                        MISC FNs
@@ -152,6 +156,22 @@ class RPiCameraActivity(activity.Activity):
             print("Camera stopped.")
         print("Object is being destroyed, cleanup performed.")
 
+    #=================== Capture Image ===================
+    def capture_image(self, _):
+        pictures_path = os.path.expanduser('~/Pictures/Camera/')
+        if not os.path.exists(pictures_path):
+            os.makedirs(pictures_path, exist_ok=True)
+
+        now = datetime.datetime.now()
+        # Format: img-ddmmyyyy-hhmmsstt.jpg; support: jpg, png, bmp, gif
+        filename = (now.strftime("img-%d%m%Y-%H%M%S") + ".jpg")
+        full_path = os.path.join(pictures_path, filename)
+
+        capture_config = self.picam2.create_still_configuration()
+        self.picam2.switch_mode_and_capture_file(capture_config, full_path)
+
+        print(f"Image captured: {full_path}")
+
     #==========================================================================
     #SECTION                             UI
     #==========================================================================
@@ -160,8 +180,16 @@ class RPiCameraActivity(activity.Activity):
         mainVbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         secVbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         secVbox.set_halign(Gtk.Align.CENTER)
-        secVbox.set_size_request(600, 400)
+        secVbox.set_size_request(640, 480)
         mainVbox.set_margin_bottom(60)
+        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        hbox.set_halign(Gtk.Align.CENTER)
+
+        vid_btn = Gtk.ToggleButton.new_with_label("Record")
+        vid_btn.set_size_request(100, 20)
+        pic_btn = Gtk.Button.new_with_label("Snap")
+        pic_btn.set_size_request(100, 20)
+        pic_btn.connect('clicked', self.capture_image)
 
         cam_window.add(mainVbox)
         cam_window.set_policy(
@@ -172,6 +200,9 @@ class RPiCameraActivity(activity.Activity):
         head_label = Gtk.Label()
         mainVbox.pack_start(head_label, False, False, 50)
         mainVbox.pack_start(secVbox, False, False, 0)
+        mainVbox.pack_start(hbox, False, False, 20)
+        hbox.pack_start(pic_btn, False, False, 5)
+        hbox.pack_start(vid_btn, False, False, 5)
         head_label.set_markup('<span font="25">Camera</span>')
         head_label.set_use_markup(True)
 
@@ -185,7 +216,7 @@ class RPiCameraActivity(activity.Activity):
         mainVbox.show_all()
         secVbox.show_all()
         cam_window.show()
-        self.start_camera_preview()
+        if flag: self.start_camera_preview()
 
         return cam_window
 
