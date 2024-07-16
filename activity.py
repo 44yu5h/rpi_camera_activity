@@ -84,21 +84,19 @@ class RPiCameraActivity(activity.Activity):
         self.set_toolbar_box(toolbar_box)
         self.show_all()
 
-        # home screen
-        self.radiobutton_cb(None, 'gpio')
+        self.set_canvas(self.cameraHomeScreen())
+        canvas = self.get_canvas()
+        bg_color = Gdk.RGBA()
+        bg_color.parse("#ECECEC")
+        canvas.override_background_color(Gtk.StateType.NORMAL, bg_color)
+
         if flag: GLib.timeout_add(1000, self.update_preview)
 
     #==========================================================================
     #SECTION                        MISC FNs
     #==========================================================================
     def radiobutton_cb(self, _b, item):
-        # set canvas
-        self.set_canvas(self.cameraHomeScreen())
-        canvas = self.get_canvas()
-        bg_color = Gdk.RGBA()
-        bg_color.parse("#ECECEC" if _lists.toolbar_items[7][2]
-                       else "#141414")
-        canvas.override_background_color(Gtk.StateType.NORMAL, bg_color)
+        None
 
     #==========================================================================
     #SECTION                     Camera operations
@@ -181,7 +179,7 @@ class RPiCameraActivity(activity.Activity):
         secVbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         secVbox.set_halign(Gtk.Align.CENTER)
         secVbox.set_size_request(640, 480)
-        mainVbox.set_margin_bottom(60)
+        mainVbox.set_margin_bottom(10)
         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         hbox.set_halign(Gtk.Align.CENTER)
 
