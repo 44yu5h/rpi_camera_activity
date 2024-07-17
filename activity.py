@@ -5,17 +5,19 @@ import os
 import gi
 import cairo
 import numpy as np
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 
-import _lists
-if flag: from picamera2 import Picamera2
+gi.require_version('Gtk', '3.0')
+gi.require_version('Rsvg', '2.0')
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Rsvg
+
+if flag:
+    from picamera2 import Picamera2
+    from libcamera import Transform
 
 from sugar3.activity import activity
 from sugar3.graphics.toolbarbox import ToolbarBox
 from sugar3.activity.widgets import StopButton
 from sugar3.activity.widgets import ActivityToolbarButton
-from sugar3.graphics.radiotoolbutton import RadioToolButton
 
 
 class RPiCameraActivity(activity.Activity):
@@ -27,6 +29,13 @@ class RPiCameraActivity(activity.Activity):
         activity.Activity.__init__(self, handle)
         self.max_participants = 1
 
+        self.get_screen_size()
+        # Camera config
+        self._size = (640, 480)
+        self._format = 'RGB888'
+        self._hflip = False
+        self._vflip = False
+
         #=================== Toolbar UI ===================
 
         self.toolbar_box = ToolbarBox()
@@ -37,6 +46,14 @@ class RPiCameraActivity(activity.Activity):
         # grid button
         self.grid_btn = self.create_toolbar_btn('grid0', 'Show/Hide Grid',
                                                 self.grid_btn_cb)
+        # hflip btn
+        self.hflip_btn = self.create_toolbar_btn(
+            'hflip', 'Horizontal Flip',
+            lambda b: self.flip_cb(b, 'hflip'))
+        # vflip btn
+        self.hflip_btn = self.create_toolbar_btn(
+            'vflip', 'Vertical Flip',
+            lambda b: self.flip_cb(b, 'vflip'))
 
         separator = Gtk.SeparatorToolItem()
         separator.props.draw = False
@@ -54,7 +71,7 @@ class RPiCameraActivity(activity.Activity):
         self.set_canvas(self.cameraHomeScreen())
         canvas = self.get_canvas()
         bg_color = Gdk.RGBA()
-        bg_color.parse("#ECECEC")
+        bg_color.parse("#1C1C1C")
         canvas.override_background_color(Gtk.StateType.NORMAL, bg_color)
 
         if flag: GLib.timeout_add(1000, self.update_preview)
@@ -62,6 +79,10 @@ class RPiCameraActivity(activity.Activity):
     #==========================================================================
     #SECTION                        MISC FNs
     #==========================================================================
+
+    def get_screen_size(self):
+        self.screen_width = Gdk.Screen.get_default().get_width()
+        self.screen_height = Gdk.Screen.get_default().get_height()
 
     def create_toolbar_btn(self, icon, tooltip, callback):
         button = Gtk.ToggleButton()
@@ -86,22 +107,40 @@ class RPiCameraActivity(activity.Activity):
                                            else 'grid0'))
         self.drawing_area.queue_draw()
 
+    def flip_cb(self, b, flip_direction):
+        if flip_direction == 'hflip':
+            self._hflip = b.get_active()
+        else:
+            self._vflip = b.get_active()
+
+        self.update_config()
+
     #==========================================================================
     #SECTION                     Camera operations
     #==========================================================================
     def start_camera_preview(self):
-        _format = 'RGB888'
-        _size = (640, 480)
-
         #* Initialize Camera
         self.picam2 = Picamera2()
-        preview_config = self.picam2.create_preview_configuration({
-            'size': _size, 'format': _format})
-        self.picam2.configure(preview_config)
+        if not hasattr(self, 'preview_config'):
+            self.preview_config = self.picam2.create_preview_configuration({
+                'size': self._size,
+                'format': self._format},
+                transform=Transform(hflip=self._hflip, vflip=self._vflip))
+        self.picam2.configure(self.preview_config)
         self.picam2.start()
 
         # Update the preview continuously: 30ms
         GLib.timeout_add(30, self.update_preview)
+
+    def update_config(self):
+        config = self.picam2.create_preview_configuration({
+            'size': self._size,
+            'format': self._format},
+            transform=Transform(hflip=self._hflip, vflip=self._vflip))
+        self.picam2.stop()
+        self.picam2.configure(config)
+        self.picam2.start()
+        print('changed preview config')
 
     def update_preview(self):
         self.drawing_area.queue_draw()
@@ -117,51 +156,69 @@ class RPiCameraActivity(activity.Activity):
         return stride, scale
 
     def on_draw(self, widget, cr):
-        array = self.picam2.capture_array()
+        try:
+            array = self.picam2.capture_array()
 
-        height, width, channels = array.shape
-        stride, scale = self.calculate_stride_and_scale(width, height, widget)
+            height, width, channels = array.shape
+            stride, scale = self.calculate_stride_and_scale(width,
+                                                            height,
+                                                            widget)
 
-        if array.nbytes < stride * height:
-            array = np.pad(array, ((0, 0), (0, 0), (0, 1)), 'constant',
-                           constant_values=0)
+            if array.nbytes < stride * height:
+                array = np.pad(array, ((0, 0), (0, 0), (0, 1)), 'constant',
+                               constant_values=0)
 
-        img_surface = cairo.ImageSurface.create_for_data(
-            array, cairo.FORMAT_RGB24,
-            width, height, stride)
+            img_surface = cairo.ImageSurface.create_for_data(
+                array, cairo.FORMAT_RGB24,
+                width, height, stride)
 
-        cr.scale(scale, scale)
-        cr.set_source_surface(img_surface, 0, 0)
-        cr.paint()
+            cr.scale(scale, scale)
+            cr.set_source_surface(img_surface, 0, 0)
+            cr.paint()
 
-        # draw 3x3 grid
-        if getattr(self, 'draw_grid', False):
-            x_spacing = width / 3
-            y_spacing = height / 3
+            # draw 3x3 grid
+            if getattr(self, 'draw_grid', False):
+                x_spacing = width / 3
+                y_spacing = height / 3
 
-            # Set the color and line width for the grid lines
-            cr.set_source_rgb(0, 0, 0)  # Black color
-            cr.set_line_width(1)
+                # Set the color and line width for the grid lines
+                cr.set_source_rgb(0, 0, 0)  # Black color
+                cr.set_line_width(1)
 
-            # Draw vertical lines
-            for i in range(1, 3):
-                cr.move_to(x_spacing * i, 0)
-                cr.line_to(x_spacing * i, height)
-                cr.stroke()
+                # Draw vertical lines
+                for i in range(1, 3):
+                    cr.move_to(x_spacing * i, 0)
+                    cr.line_to(x_spacing * i, height)
+                    cr.stroke()
 
-            # Draw horizontal lines
-            for i in range(1, 3):
-                cr.move_to(0, y_spacing * i)
-                cr.line_to(width, y_spacing * i)
-                cr.stroke()
+                # Draw horizontal lines
+                for i in range(1, 3):
+                    cr.move_to(0, y_spacing * i)
+                    cr.line_to(width, y_spacing * i)
+                    cr.stroke()
 
-    # Perform cleanup
+        except:
+            # cr.set_source_rgb(0, 0, 0)  # black background
+            # cr.paint()
+
+            svg = 'icons/no_cam.svg'
+            svg_handle = Rsvg.Handle.new_from_file(svg)
+            svg_dimension = svg_handle.get_dimensions()
+            # center the svg
+            svg_x = (self.screen_width - svg_dimension.width) / 2
+            svg_y = (self.screen_height - svg_dimension.height) / 2
+
+            cr.save()
+            cr.translate(svg_x, svg_y)
+            svg_handle.render_cairo(cr)
+            cr.restore()
+
+    # Perform cleanup before exiting
     def __del__(self):
         if hasattr(self, 'picam2'):
             self.picam2.stop()
             del self.picam2
-            print("Camera stopped.")
-        print("Object is being destroyed, cleanup performed.")
+            print("Camera stopped, memory released")
 
     #=================== Capture Image ===================
     def capture_image(self, _):
@@ -186,8 +243,8 @@ class RPiCameraActivity(activity.Activity):
         cam_window = Gtk.ScrolledWindow()
         mainVbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         secVbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        secVbox.set_halign(Gtk.Align.CENTER)
         secVbox.set_size_request(640, 480)
+        secVbox.set_margin_left(90)
         mainVbox.set_margin_bottom(10)
         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         hbox.set_halign(Gtk.Align.CENTER)
@@ -204,21 +261,16 @@ class RPiCameraActivity(activity.Activity):
             vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
         )
 
-        head_label = Gtk.Label()
-        mainVbox.pack_start(head_label, False, False, 50)
-        mainVbox.pack_start(secVbox, False, False, 0)
-        mainVbox.pack_start(hbox, False, False, 20)
+        mainVbox.pack_start(secVbox, True, True, 0)
         hbox.pack_start(pic_btn, False, False, 5)
         hbox.pack_start(vid_btn, False, False, 5)
-        head_label.set_markup('<span font="25">Camera</span>')
-        head_label.set_use_markup(True)
 
         self.drawing_area = Gtk.DrawingArea()
         # self.drawing_area.set_size_request(300, 200)
-        if flag: self.drawing_area.connect("draw", self.on_draw)
+        self.drawing_area.connect("draw", self.on_draw)
 
         secVbox.pack_start(self.drawing_area, True, True, 0)
-        secVbox.show_all()
+        secVbox.pack_start(hbox, False, False, 20)
         mainVbox.show_all()
         secVbox.show_all()
         cam_window.show()
