@@ -6,7 +6,7 @@ import gi
 import cairo
 import numpy as np
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 
 import _lists
 if flag: from picamera2 import Picamera2
@@ -27,61 +27,28 @@ class RPiCameraActivity(activity.Activity):
         activity.Activity.__init__(self, handle)
         self.max_participants = 1
 
-        # toolbar
-        toolbar_box = ToolbarBox()
+        #=================== Toolbar UI ===================
+
+        self.toolbar_box = ToolbarBox()
         activity_button = ActivityToolbarButton(self)
-        toolbar_box.toolbar.insert(activity_button, 0)
+        self.toolbar_box.toolbar.insert(activity_button, 0)
         activity_button.show()
 
-        # toolbar buttons
-        self.items = {}
-
-        # group radio buttons
-        # [first index, last index, group]
-        groups = [[0, 2, None], [2, 4, None], [4, 7, None]]
-
-        for group_index, group_range in enumerate(groups):
-            start_index, end_index, group = group_range
-
-            for item in _lists.toolbar_items[start_index:end_index]:
-                icon_name, tooltip, state = item
-                button = RadioToolButton()
-                button.set_tooltip(tooltip)
-                button.props.icon_name = icon_name  # + ('1' if state else '0')
-                if group is None:
-                    group_range[2] = button
-                    group = button
-                button.props.group = group
-                toolbar_box.toolbar.insert(button, -1)
-                self.items[icon_name] = button
-                button.connect('toggled', self.radiobutton_cb, item)
-
-            # separator after each group
-            if group_index < len(groups) - 1:
-                tool_item = Gtk.ToolItem()
-                separator = Gtk.SeparatorToolItem()
-                separator.props.draw = True
-                tool_item.add(separator)
-
-                # reduce seperator length
-                tool_item.set_expand(False)
-                tool_item.set_homogeneous(False)
-                tool_item.set_margin_top(10)
-                tool_item.set_margin_bottom(10)
-
-                toolbar_box.toolbar.insert(tool_item, -1)
+        # grid button
+        self.grid_btn = self.create_toolbar_btn('grid0', 'Show/Hide Grid',
+                                                self.grid_btn_cb)
 
         separator = Gtk.SeparatorToolItem()
         separator.props.draw = False
         separator.set_expand(True)
-        toolbar_box.toolbar.insert(separator, -1)
+        self.toolbar_box.toolbar.insert(separator, -1)
         separator.show()
 
         stop_button = StopButton(self)
-        toolbar_box.toolbar.insert(stop_button, -1)
+        self.toolbar_box.toolbar.insert(stop_button, -1)
         stop_button.show()
 
-        self.set_toolbar_box(toolbar_box)
+        self.set_toolbar_box(self.toolbar_box)
         self.show_all()
 
         self.set_canvas(self.cameraHomeScreen())
@@ -95,8 +62,29 @@ class RPiCameraActivity(activity.Activity):
     #==========================================================================
     #SECTION                        MISC FNs
     #==========================================================================
-    def radiobutton_cb(self, _b, item):
-        None
+
+    def create_toolbar_btn(self, icon, tooltip, callback):
+        button = Gtk.ToggleButton()
+        button.set_image(self._icon(icon))
+        button.set_tooltip_text(tooltip)
+        button.connect('toggled', callback)
+        tool_item = Gtk.ToolItem()
+        tool_item.add(button)
+        self.toolbar_box.toolbar.insert(tool_item, -1)
+        return button
+
+    def _icon(self, icon_name):
+        icon = Gtk.Image()
+        pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+            'icons/' + icon_name + '.svg', 50, 50, True)
+        icon.set_from_pixbuf(pixbuf)
+        return icon
+
+    def grid_btn_cb(self, b):
+        self.draw_grid = b.get_active()
+        self.grid_btn.set_image(self._icon('grid1' if self.draw_grid
+                                           else 'grid0'))
+        self.drawing_area.queue_draw()
 
     #==========================================================================
     #SECTION                     Camera operations
@@ -145,6 +133,27 @@ class RPiCameraActivity(activity.Activity):
         cr.scale(scale, scale)
         cr.set_source_surface(img_surface, 0, 0)
         cr.paint()
+
+        # draw 3x3 grid
+        if getattr(self, 'draw_grid', False):
+            x_spacing = width / 3
+            y_spacing = height / 3
+
+            # Set the color and line width for the grid lines
+            cr.set_source_rgb(0, 0, 0)  # Black color
+            cr.set_line_width(1)
+
+            # Draw vertical lines
+            for i in range(1, 3):
+                cr.move_to(x_spacing * i, 0)
+                cr.line_to(x_spacing * i, height)
+                cr.stroke()
+
+            # Draw horizontal lines
+            for i in range(1, 3):
+                cr.move_to(0, y_spacing * i)
+                cr.line_to(width, y_spacing * i)
+                cr.stroke()
 
     # Perform cleanup
     def __del__(self):
@@ -204,10 +213,9 @@ class RPiCameraActivity(activity.Activity):
         head_label.set_markup('<span font="25">Camera</span>')
         head_label.set_use_markup(True)
 
-        # Create a DrawingArea and add it to secVbox
         self.drawing_area = Gtk.DrawingArea()
         # self.drawing_area.set_size_request(300, 200)
-        self.drawing_area.connect("draw", self.on_draw)
+        if flag: self.drawing_area.connect("draw", self.on_draw)
 
         secVbox.pack_start(self.drawing_area, True, True, 0)
         secVbox.show_all()
