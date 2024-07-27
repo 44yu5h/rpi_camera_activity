@@ -8,7 +8,7 @@ import numpy as np
 
 gi.require_version('Gtk', '3.0')
 gi.require_version('Rsvg', '2.0')
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Rsvg
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 
 try:
     from picamera2 import Picamera2
@@ -32,7 +32,6 @@ class RPiCameraActivity(activity.Activity):
     def __init__(self, handle):
         activity.Activity.__init__(self, handle)
         self.max_participants = 1
-        self.show_timer=False
 
         self.get_screen_size()
         # Camera config
@@ -212,30 +211,35 @@ class RPiCameraActivity(activity.Activity):
                     cr.line_to(width, y_spacing * i)
                     cr.stroke()
         else:
-            self.draw_icon(cr, 'no_cam')
+            self.overlay_icon(icon_name='no_cam')
 
-    def draw_icon(self, cr, icon):
-        if (not self.show_timer):
-            cr.set_source_rgb(0, 0, 0)  # black background
-            cr.paint()
+    def overlay_icon(self, icon_name, hide=False):
+        if hide:
+            self.overlay.remove(self._icon_overlay)
+            del self._icon_overlay
+            return
+        if hasattr(self, '_icon_overlay'):
+            self.overlay.remove(self._icon_overlay)
+        height, width = 150, 150
+        icon_path = 'icons/' + icon_name + '.svg'
 
-        svg = 'icons/' + icon + '.svg'
-        svg_handle = Rsvg.Handle.new_from_file(svg)
-        svg_dimension = svg_handle.get_dimensions()
+        loader = GdkPixbuf.PixbufLoader.new_with_type('svg')
+        with open(icon_path, 'rb') as f:
+            loader.write(f.read())
+        loader.close()
+        raw_pixbuf = loader.get_pixbuf()
 
-        scaled_width = svg_dimension.width * 0.3
-        scaled_height = svg_dimension.height * 0.3
+        pixbuf = raw_pixbuf.scale_simple(width,
+                                         height,
+                                         GdkPixbuf.InterpType.BILINEAR)
 
-        # Calculate new x and y positions to center the scaled SVG
-        svg_x = (self.screen_width - scaled_width) / 2
-        if camera_ok: svg_x -= 80
-        svg_y = (self.screen_height - scaled_height) / 2
+        self._icon_overlay = Gtk.Image.new_from_pixbuf(pixbuf)
+        self._icon_overlay.set_halign(Gtk.Align.CENTER)
+        self._icon_overlay.set_valign(Gtk.Align.CENTER)
 
-        cr.save()
-        cr.translate(svg_x, svg_y)
-        cr.scale(.3, .3)
-        svg_handle.render_cairo(cr)
-        cr.restore()
+        self.overlay.add_overlay(self._icon_overlay)
+        self._icon_overlay.show()
+        self.overlay.show_all()
 
     # Perform cleanup before exiting
     def __del__(self):
@@ -297,7 +301,11 @@ class RPiCameraActivity(activity.Activity):
         self.drawing_area = Gtk.DrawingArea()
         self.drawing_area.connect("draw", self.on_draw)
 
-        secVbox.pack_start(self.drawing_area, True, True, 0)
+        self.overlay = Gtk.Overlay()
+        self.overlay.add(self.drawing_area)
+        secVbox.pack_start(self.overlay, True, True, 0)
+        self.overlay.show_all()
+
         secVbox.pack_start(hbox, False, False, 0)
         mainVbox.show_all()
         secVbox.show_all()
