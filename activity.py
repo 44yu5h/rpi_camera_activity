@@ -40,7 +40,6 @@ class RPiCameraActivity(activity.Activity):
         self._hflip = False
         self._vflip = False
         self._timer = 0
-
         #=================== Toolbar UI ===================
 
         self.toolbar_box = ToolbarBox()
@@ -220,6 +219,7 @@ class RPiCameraActivity(activity.Activity):
             return
         if hasattr(self, '_icon_overlay'):
             self.overlay.remove(self._icon_overlay)
+
         height, width = 150, 150
         icon_path = 'icons/' + icon_name + '.svg'
 
@@ -241,6 +241,29 @@ class RPiCameraActivity(activity.Activity):
         self._icon_overlay.show()
         self.overlay.show_all()
 
+    def run_timer(self, callback=None):
+        self._timer_callback = callback
+        if self._timer == 0:
+            self._timer_callback()
+            return
+        self.update_timer()  # remove the 1sec delay before timer shows up
+        GLib.timeout_add(1000, self.update_timer)
+
+    def update_timer(self):
+        if not hasattr(self, '_current_time'):
+            self._current_time = self._timer
+        if self._current_time != 0:
+            self.overlay_icon(f'{self._current_time}s')
+            print(f"Timer: {self._current_time}")
+            self._current_time -= 1
+            return True
+        else:
+            self.overlay_icon('', hide=True)
+            del self._current_time
+            if self._timer_callback:
+                self._timer_callback()
+            return False
+
     # Perform cleanup before exiting
     def __del__(self):
         if hasattr(self, 'picam2'):
@@ -250,20 +273,22 @@ class RPiCameraActivity(activity.Activity):
 
     #=================== Capture Image ===================
     def capture_image(self, _):
+        def after_timer():
+            pictures_path = os.path.expanduser('~/Pictures/Camera/')
+            if not os.path.exists(pictures_path):
+                os.makedirs(pictures_path, exist_ok=True)
 
-        pictures_path = os.path.expanduser('~/Pictures/Camera/')
-        if not os.path.exists(pictures_path):
-            os.makedirs(pictures_path, exist_ok=True)
+            now = datetime.datetime.now()
+            # Format: img-ddmmyyyy-hhmmsstt.jpg; support: jpg, png, bmp, gif
+            filename = (now.strftime("img-%d%m%Y-%H%M%S") + ".jpg")
+            full_path = os.path.join(pictures_path, filename)
 
-        now = datetime.datetime.now()
-        # Format: img-ddmmyyyy-hhmmsstt.jpg; support: jpg, png, bmp, gif
-        filename = (now.strftime("img-%d%m%Y-%H%M%S") + ".jpg")
-        full_path = os.path.join(pictures_path, filename)
+            capture_config = self.picam2.create_still_configuration()
+            self.picam2.switch_mode_and_capture_file(capture_config, full_path)
 
-        capture_config = self.picam2.create_still_configuration()
-        self.picam2.switch_mode_and_capture_file(capture_config, full_path)
+            print(f"Image captured: {full_path}")
 
-        print(f"Image captured: {full_path}")
+        self.run_timer(after_timer)
 
     #=================== Record Video ===================
     def record_video(self, b):
