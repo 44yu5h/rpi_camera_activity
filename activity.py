@@ -1,4 +1,4 @@
-flag = True  # False: for testing without camera
+camera_ok = True  # False: for testing without camera
 
 import datetime
 import os
@@ -8,11 +8,15 @@ import numpy as np
 
 gi.require_version('Gtk', '3.0')
 gi.require_version('Rsvg', '2.0')
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Rsvg
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 
-if flag:
+try:
     from picamera2 import Picamera2
     from libcamera import Transform
+    camera_ok = True
+except ImportError:
+    camera_ok = False
+    print("Error importing camera modules")
 
 from sugar3.activity import activity
 from sugar3.graphics.toolbarbox import ToolbarBox
@@ -35,7 +39,7 @@ class RPiCameraActivity(activity.Activity):
         self._format = 'RGB888'
         self._hflip = False
         self._vflip = False
-
+        self._timer = 0
         #=================== Toolbar UI ===================
 
         self.toolbar_box = ToolbarBox()
@@ -54,6 +58,9 @@ class RPiCameraActivity(activity.Activity):
         self.hflip_btn = self.create_toolbar_btn(
             'vflip', 'Vertical Flip',
             lambda b: self.flip_cb(b, 'vflip'))
+        # timer btn
+        self.timer_btn = self.create_toolbar_btn(
+            'timer0', 'Timer', self.timer_cb)
 
         separator = Gtk.SeparatorToolItem()
         separator.props.draw = False
@@ -74,7 +81,7 @@ class RPiCameraActivity(activity.Activity):
         bg_color.parse("#1C1C1C")
         canvas.override_background_color(Gtk.StateType.NORMAL, bg_color)
 
-        if flag: GLib.timeout_add(1000, self.update_preview)
+        if camera_ok: GLib.timeout_add(1000, self.update_preview)
 
     #==========================================================================
     #SECTION                        MISC FNs
@@ -114,6 +121,12 @@ class RPiCameraActivity(activity.Activity):
             self._vflip = b.get_active()
 
         self.update_config()
+
+    def timer_cb(self, b: Gtk.ToggleButton):
+        t_list = [0, 3, 5]  # timer values
+        self._timer = t_list[t_list.index(self._timer) + 1] if self._timer < 5\
+            else 0
+        b.set_image(self._icon('timer' + str(self._timer)))
 
     #==========================================================================
     #SECTION                     Camera operations
@@ -179,7 +192,7 @@ class RPiCameraActivity(activity.Activity):
         return stride, scale
 
     def on_draw(self, widget, cr):
-        try:
+        if camera_ok:
             array = self.picam2.capture_array()
 
             height, width, channels = array.shape
@@ -219,22 +232,60 @@ class RPiCameraActivity(activity.Activity):
                     cr.move_to(0, y_spacing * i)
                     cr.line_to(width, y_spacing * i)
                     cr.stroke()
+        else:
+            self.overlay_icon(icon_name='no_cam')
 
-        except:
-            # cr.set_source_rgb(0, 0, 0)  # black background
-            # cr.paint()
+    def overlay_icon(self, icon_name, hide=False):
+        if hide:
+            self.overlay.remove(self._icon_overlay)
+            del self._icon_overlay
+            return
+        if hasattr(self, '_icon_overlay'):
+            self.overlay.remove(self._icon_overlay)
 
-            svg = 'icons/no_cam.svg'
-            svg_handle = Rsvg.Handle.new_from_file(svg)
-            svg_dimension = svg_handle.get_dimensions()
-            # center the svg
-            svg_x = (self.screen_width - svg_dimension.width) / 2
-            svg_y = (self.screen_height - svg_dimension.height) / 2
+        height, width = 150, 150
+        icon_path = 'icons/' + icon_name + '.svg'
 
-            cr.save()
-            cr.translate(svg_x, svg_y)
-            svg_handle.render_cairo(cr)
-            cr.restore()
+        loader = GdkPixbuf.PixbufLoader.new_with_type('svg')
+        with open(icon_path, 'rb') as f:
+            loader.write(f.read())
+        loader.close()
+        raw_pixbuf = loader.get_pixbuf()
+
+        pixbuf = raw_pixbuf.scale_simple(width,
+                                         height,
+                                         GdkPixbuf.InterpType.BILINEAR)
+
+        self._icon_overlay = Gtk.Image.new_from_pixbuf(pixbuf)
+        self._icon_overlay.set_halign(Gtk.Align.CENTER)
+        self._icon_overlay.set_valign(Gtk.Align.CENTER)
+
+        self.overlay.add_overlay(self._icon_overlay)
+        self._icon_overlay.show()
+        self.overlay.show_all()
+
+    def run_timer(self, callback=None):
+        self._timer_callback = callback
+        if self._timer == 0:
+            self._timer_callback()
+            return
+        self.update_timer()  # remove the 1sec delay before timer shows up
+        GLib.timeout_add(1000, self.update_timer)
+
+    def update_timer(self):
+        if not hasattr(self, '_current_time'):
+            self._current_time = self._timer
+        if self._current_time != 0:
+            self.overlay_icon(f'{self._current_time}s')
+            print(f"Timer: {self._current_time}")
+            self._current_time -= 1
+            return True
+        else:
+            self.overlay_icon('', hide=True)
+            del self._current_time
+            if self._timer_callback:
+                self._timer_callback()
+            return False
 
     # Perform cleanup before exiting
     def __del__(self):
@@ -245,19 +296,27 @@ class RPiCameraActivity(activity.Activity):
 
     #=================== Capture Image ===================
     def capture_image(self, _):
-        pictures_path = os.path.expanduser('~/Pictures/Camera/')
-        if not os.path.exists(pictures_path):
-            os.makedirs(pictures_path, exist_ok=True)
+        def after_timer():
+            pictures_path = os.path.expanduser('~/Pictures/Camera/')
+            if not os.path.exists(pictures_path):
+                os.makedirs(pictures_path, exist_ok=True)
 
-        now = datetime.datetime.now()
-        # Format: img-ddmmyyyy-hhmmsstt.jpg; support: jpg, png, bmp, gif
-        filename = (now.strftime("img-%d%m%Y-%H%M%S") + ".jpg")
-        full_path = os.path.join(pictures_path, filename)
+            now = datetime.datetime.now()
+            # Format: img-ddmmyyyy-hhmmsstt.jpg; support: jpg, png, bmp, gif
+            filename = (now.strftime("img-%d%m%Y-%H%M%S") + ".jpg")
+            full_path = os.path.join(pictures_path, filename)
 
-        capture_config = self.picam2.create_still_configuration()
-        self.picam2.switch_mode_and_capture_file(capture_config, full_path)
+            capture_config = self.picam2.create_still_configuration()
+            self.picam2.switch_mode_and_capture_file(capture_config, full_path)
 
-        print(f"Image captured: {full_path}")
+            print(f"Image captured: {full_path}")
+
+        self.run_timer(after_timer)
+
+    #=================== Record Video ===================
+    def record_video(self, b):
+        if b.get_active():
+            None
 
     #==========================================================================
     #SECTION                             UI
@@ -266,8 +325,7 @@ class RPiCameraActivity(activity.Activity):
         cam_window = Gtk.ScrolledWindow()
         mainVbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         secVbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        secVbox.set_size_request(640, 480)
-        secVbox.set_margin_left(90)
+        if camera_ok: secVbox.set_margin_left(80)
         mainVbox.set_margin_bottom(10)
         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         hbox.set_halign(Gtk.Align.CENTER)
@@ -289,15 +347,18 @@ class RPiCameraActivity(activity.Activity):
         hbox.pack_start(vid_btn, False, False, 5)
 
         self.drawing_area = Gtk.DrawingArea()
-        # self.drawing_area.set_size_request(300, 200)
         self.drawing_area.connect("draw", self.on_draw)
 
-        secVbox.pack_start(self.drawing_area, True, True, 0)
-        secVbox.pack_start(hbox, False, False, 20)
+        self.overlay = Gtk.Overlay()
+        self.overlay.add(self.drawing_area)
+        secVbox.pack_start(self.overlay, True, True, 0)
+        self.overlay.show_all()
+
+        secVbox.pack_start(hbox, False, False, 0)
         mainVbox.show_all()
         secVbox.show_all()
         cam_window.show()
-        if flag: self.start_camera_preview()
+        if camera_ok: self.start_camera_preview()
 
         return cam_window
 
