@@ -12,6 +12,8 @@ from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 
 try:
     from picamera2 import Picamera2
+    from picamera2.outputs import FfmpegOutput
+    from picamera2.encoders import H264Encoder
     from libcamera import Transform
     camera_ok = True
 except ImportError:
@@ -127,6 +129,19 @@ class RPiCameraActivity(activity.Activity):
         self._timer = t_list[t_list.index(self._timer) + 1] if self._timer < 5\
             else 0
         b.set_image(self._icon('timer' + str(self._timer)))
+        
+    def get_filename(self, type):
+        pictures_path = os.path.expanduser('~/Pictures/Camera/')
+        if not os.path.exists(pictures_path):
+            os.makedirs(pictures_path, exist_ok=True)
+
+        now = datetime.datetime.now()
+        # Format: ddmmyyyy-hhmmsstt
+        filename = 'img-' if type == 'img' else 'vid-'
+        filename += now.strftime("%d%m%Y-%H%M%S")
+        filename += '.jpg' if type == 'img' else '.mp4'
+        full_path = os.path.join(pictures_path, filename)
+        return full_path
 
     #==========================================================================
     #SECTION                     Camera operations
@@ -254,7 +269,6 @@ class RPiCameraActivity(activity.Activity):
             self._current_time = self._timer
         if self._current_time != 0:
             self.overlay_icon(f'{self._current_time}s')
-            print(f"Timer: {self._current_time}")
             self._current_time -= 1
             return True
         else:
@@ -274,26 +288,25 @@ class RPiCameraActivity(activity.Activity):
     #=================== Capture Image ===================
     def capture_image(self, _):
         def after_timer():
-            pictures_path = os.path.expanduser('~/Pictures/Camera/')
-            if not os.path.exists(pictures_path):
-                os.makedirs(pictures_path, exist_ok=True)
-
-            now = datetime.datetime.now()
-            # Format: img-ddmmyyyy-hhmmsstt.jpg; support: jpg, png, bmp, gif
-            filename = (now.strftime("img-%d%m%Y-%H%M%S") + ".jpg")
-            full_path = os.path.join(pictures_path, filename)
-
+            filename = self.get_filename('img')
             capture_config = self.picam2.create_still_configuration()
-            self.picam2.switch_mode_and_capture_file(capture_config, full_path)
-
-            print(f"Image captured: {full_path}")
-
+            self.picam2.switch_mode_and_capture_file(capture_config, filename)
+            print(f"Image captured: {filename}")
         self.run_timer(after_timer)
 
     #=================== Record Video ===================
     def record_video(self, b):
         if b.get_active():
-            None
+            def after_timer():
+                encoder = H264Encoder()
+                self.output = FfmpegOutput(self.get_filename('vid'))
+                encoder.output = self.output
+                self.picam2.start_encoder(encoder)
+            self.run_timer(after_timer)
+        else:
+            self.output.stop()
+            self.picam2.stop_encoder()
+            print("Video saved!")
 
     #==========================================================================
     #SECTION                             UI
@@ -309,6 +322,7 @@ class RPiCameraActivity(activity.Activity):
 
         vid_btn = Gtk.ToggleButton.new_with_label("Record")
         vid_btn.set_size_request(100, 20)
+        vid_btn.connect('toggled', self.record_video)
         pic_btn = Gtk.Button.new_with_label("Snap")
         pic_btn.set_size_request(100, 20)
         pic_btn.connect('clicked', self.capture_image)
