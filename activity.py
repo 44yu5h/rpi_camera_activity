@@ -34,6 +34,7 @@ class RPiCameraActivity(activity.Activity):
     def __init__(self, handle):
         activity.Activity.__init__(self, handle)
         self.max_participants = 1
+        self.is_recording = False
 
         self.get_screen_size()
         # Camera config
@@ -63,6 +64,7 @@ class RPiCameraActivity(activity.Activity):
         # timer btn
         self.timer_btn = self.create_toolbar_btn(
             'timer0', 'Timer', self.timer_cb)
+        self.timer_btn.get_style_context().add_class('timer_toolbar_button')
 
         separator = Gtk.SeparatorToolItem()
         separator.props.draw = False
@@ -287,7 +289,7 @@ class RPiCameraActivity(activity.Activity):
             formatted_time = f"{minutes:02}:{seconds:02}"
             red_dot = '\u25CF'
             self.rec_overlay.set_markup(f'<span foreground="red"\
-                font_desc="15px">{red_dot}</span> REC {formatted_time}')
+                font_desc="17px">{red_dot}</span> REC {formatted_time}')
             self.rec_overlay.get_style_context().add_class('rec-label-bg')
             self.rec_overlay.show()
             self.overlay.show_all()
@@ -320,6 +322,7 @@ class RPiCameraActivity(activity.Activity):
     def record_video(self, b):
         if b.get_active():
             def after_timer():
+                self.vid_btn.set_image(self.rec_on_icon)
                 encoder = H264Encoder()
                 self.output = FfmpegOutput(self.get_filename('vid'))
                 encoder.output = self.output
@@ -331,6 +334,7 @@ class RPiCameraActivity(activity.Activity):
             self.stop_recording()
 
     def stop_recording(self):
+        self.vid_btn.set_image(self.rec_off_icon)
         self.output.stop()
         self.is_recording = False
         self.picam2.stop_encoder()
@@ -346,14 +350,16 @@ class RPiCameraActivity(activity.Activity):
         secVbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         if camera_ok: secVbox.set_margin_left(80)
         mainVbox.set_margin_bottom(10)
-        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        hbox.set_halign(Gtk.Align.CENTER)
 
-        vid_btn = Gtk.ToggleButton.new_with_label("Record")
-        vid_btn.set_size_request(100, 20)
-        vid_btn.connect('toggled', self.record_video)
-        pic_btn = Gtk.Button.new_with_label("Snap")
-        pic_btn.set_size_request(100, 20)
+        self.rec_off_icon = Gtk.Image.new_from_file("icons/rec-off.svg")
+        self.rec_on_icon = Gtk.Image.new_from_file("icons/rec-on.svg")
+        pic_icon = Gtk.Image.new_from_file("icons/snap.svg")
+        
+        self.vid_btn = Gtk.ToggleButton()
+        self.vid_btn.set_image(self.rec_off_icon)
+        self.vid_btn.connect('toggled', self.record_video)
+        pic_btn = Gtk.ToggleButton()
+        pic_btn.set_image(pic_icon)
         pic_btn.connect('clicked', self.capture_image)
 
         cam_window.add(mainVbox)
@@ -361,11 +367,9 @@ class RPiCameraActivity(activity.Activity):
             hscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
             vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
         )
-
         mainVbox.pack_start(secVbox, True, True, 0)
-        hbox.pack_start(pic_btn, False, False, 5)
-        hbox.pack_start(vid_btn, False, False, 5)
 
+        # Drawing Area (camera preview)
         self.drawing_area = Gtk.DrawingArea()
         self.drawing_area.connect("draw", self.on_draw)
 
@@ -375,7 +379,7 @@ class RPiCameraActivity(activity.Activity):
         self.overlay.add(self.drawing_area)
         secVbox.pack_start(self.overlay, True, True, 0)
 
-        # Recording time overlay
+        # Life is boring without some css
         css = """
         .rec-label-bg {
             font-size: 14px;
@@ -386,6 +390,26 @@ class RPiCameraActivity(activity.Activity):
             margin-left: 10px;
             margin-top: 10px;
         }
+
+        .action-button-bar {
+            background-color: rgba(0, 0, 0, 0.2);
+            border-radius: 100px;
+            margin-bottom: 10px;
+            padding-left: 10px;
+            padding-right: 10px;
+        }
+        
+        .timer_toolbar_button {
+            padding: 3px;
+            margin-left: 10px;
+            margin-right: 10px;
+        }
+
+        button {
+        background: none;
+        border: none;
+        box-shadow: none;
+        }
         """
         css_provider = Gtk.CssProvider()
         css_provider.load_from_data(css.encode('utf-8'))
@@ -394,14 +418,25 @@ class RPiCameraActivity(activity.Activity):
             css_provider,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
+
+        # Snap/Vid Button container
+        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        hbox.set_halign(Gtk.Align.CENTER)
+        hbox.set_valign(Gtk.Align.END)
+        hbox.get_style_context().add_class('action-button-bar')
+        hbox.pack_start(pic_btn, False, False, 0)
+        hbox.pack_start(self.vid_btn, False, False, 0)
+
+        # Recording time overlay
         self.rec_overlay = Gtk.Label()
         self.overlay.add_overlay(self.rec_overlay)
         self.rec_overlay.set_halign(Gtk.Align.START)
         self.rec_overlay.set_valign(Gtk.Align.START)
+        
+        self.overlay.add_overlay(hbox)
 
         self.overlay.show_all()
 
-        secVbox.pack_start(hbox, False, False, 0)
         mainVbox.show_all()
         secVbox.show_all()
         cam_window.show()
