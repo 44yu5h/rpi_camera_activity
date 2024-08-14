@@ -1,6 +1,6 @@
 camera_ok = True  # False: for testing without camera
 
-import datetime
+from datetime import datetime
 import os
 import gi
 import cairo
@@ -12,6 +12,8 @@ from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 
 try:
     from picamera2 import Picamera2
+    from picamera2.outputs import FfmpegOutput
+    from picamera2.encoders import H264Encoder
     from libcamera import Transform
     camera_ok = True
 except ImportError:
@@ -127,6 +129,19 @@ class RPiCameraActivity(activity.Activity):
         self._timer = t_list[t_list.index(self._timer) + 1] if self._timer < 5\
             else 0
         b.set_image(self._icon('timer' + str(self._timer)))
+
+    def get_filename(self, type):
+        pictures_path = os.path.expanduser('~/Pictures/Camera/')
+        if not os.path.exists(pictures_path):
+            os.makedirs(pictures_path, exist_ok=True)
+
+        now = datetime.now()
+        # Format: ddmmyyyy-hhmmsstt
+        filename = 'img-' if type == 'img' else 'vid-'
+        filename += now.strftime("%d%m%Y-%H%M%S")
+        filename += '.jpg' if type == 'img' else '.mp4'
+        full_path = os.path.join(pictures_path, filename)
+        return full_path
 
     #==========================================================================
     #SECTION                     Camera operations
@@ -254,7 +269,6 @@ class RPiCameraActivity(activity.Activity):
             self._current_time = self._timer
         if self._current_time != 0:
             self.overlay_icon(f'{self._current_time}s')
-            print(f"Timer: {self._current_time}")
             self._current_time -= 1
             return True
         else:
@@ -262,6 +276,28 @@ class RPiCameraActivity(activity.Activity):
             del self._current_time
             if self._timer_callback:
                 self._timer_callback()
+            return False
+
+    def record_overlay(self):
+        if not hasattr(self, 'rec_time_sec'):
+            self.rec_time_sec = 0
+        if self.is_recording:
+            self.rec_time_sec += 1
+            minutes, seconds = divmod(self.rec_time_sec, 60)
+            formatted_time = f"{minutes:02}:{seconds:02}"
+            red_dot = '\u25CF'
+            self.rec_overlay.set_markup(f'<span foreground="red"\
+                font_desc="15px">{red_dot}</span> REC {formatted_time}')
+            self.rec_overlay.get_style_context().add_class('rec-label-bg')
+            self.rec_overlay.show()
+            self.overlay.show_all()
+            if self.rec_time_sec > 15 * 60:
+                self.stop_recording()
+            return True
+        else:
+            self.rec_overlay.set_markup('')
+            self.rec_overlay.get_style_context().remove_class('rec-label-bg')
+            self.rec_overlay.hide()
             return False
 
     # Perform cleanup before exiting
@@ -274,26 +310,32 @@ class RPiCameraActivity(activity.Activity):
     #=================== Capture Image ===================
     def capture_image(self, _):
         def after_timer():
-            pictures_path = os.path.expanduser('~/Pictures/Camera/')
-            if not os.path.exists(pictures_path):
-                os.makedirs(pictures_path, exist_ok=True)
-
-            now = datetime.datetime.now()
-            # Format: img-ddmmyyyy-hhmmsstt.jpg; support: jpg, png, bmp, gif
-            filename = (now.strftime("img-%d%m%Y-%H%M%S") + ".jpg")
-            full_path = os.path.join(pictures_path, filename)
-
+            filename = self.get_filename('img')
             capture_config = self.picam2.create_still_configuration()
-            self.picam2.switch_mode_and_capture_file(capture_config, full_path)
-
-            print(f"Image captured: {full_path}")
-
+            self.picam2.switch_mode_and_capture_file(capture_config, filename)
+            print(f"Image captured: {filename}")
         self.run_timer(after_timer)
 
     #=================== Record Video ===================
     def record_video(self, b):
         if b.get_active():
-            None
+            def after_timer():
+                encoder = H264Encoder()
+                self.output = FfmpegOutput(self.get_filename('vid'))
+                encoder.output = self.output
+                self.picam2.start_encoder(encoder)
+                GLib.timeout_add(1000, self.record_overlay)
+            self.is_recording = True
+            self.run_timer(after_timer)
+        else:
+            self.stop_recording()
+
+    def stop_recording(self):
+        self.output.stop()
+        self.is_recording = False
+        self.picam2.stop_encoder()
+        print(f"Video saved! Duration: {self.rec_time_sec} seconds")
+        self.rec_time_sec = 0
 
     #==========================================================================
     #SECTION                             UI
@@ -309,6 +351,7 @@ class RPiCameraActivity(activity.Activity):
 
         vid_btn = Gtk.ToggleButton.new_with_label("Record")
         vid_btn.set_size_request(100, 20)
+        vid_btn.connect('toggled', self.record_video)
         pic_btn = Gtk.Button.new_with_label("Snap")
         pic_btn.set_size_request(100, 20)
         pic_btn.connect('clicked', self.capture_image)
@@ -326,9 +369,36 @@ class RPiCameraActivity(activity.Activity):
         self.drawing_area = Gtk.DrawingArea()
         self.drawing_area.connect("draw", self.on_draw)
 
+        # Add overlay
         self.overlay = Gtk.Overlay()
+        # Add the drawing area to the last layer of the overlay
         self.overlay.add(self.drawing_area)
         secVbox.pack_start(self.overlay, True, True, 0)
+
+        # Recording time overlay
+        css = """
+        .rec-label-bg {
+            font-size: 14px;
+            background-color: white;
+            color: black;
+            border-radius: 5px;
+            padding: 2px 5px;
+            margin-left: 10px;
+            margin-top: 10px;
+        }
+        """
+        css_provider = Gtk.CssProvider()
+        css_provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            css_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        self.rec_overlay = Gtk.Label()
+        self.overlay.add_overlay(self.rec_overlay)
+        self.rec_overlay.set_halign(Gtk.Align.START)
+        self.rec_overlay.set_valign(Gtk.Align.START)
+
         self.overlay.show_all()
 
         secVbox.pack_start(hbox, False, False, 0)
