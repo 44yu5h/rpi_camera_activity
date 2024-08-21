@@ -58,7 +58,7 @@ class RPiCameraActivity(activity.Activity):
             'hflip', 'Horizontal Flip',
             lambda b: self.flip_cb(b, 'hflip'))
         # vflip btn
-        self.hflip_btn = self.create_toolbar_btn(
+        self.vflip_btn = self.create_toolbar_btn(
             'vflip', 'Vertical Flip',
             lambda b: self.flip_cb(b, 'vflip'))
         # timer btn
@@ -87,7 +87,13 @@ class RPiCameraActivity(activity.Activity):
         self.set_canvas(self.cameraHomeScreen())
         self.dark_mode_btn.set_active(True)
 
-        if camera_ok: GLib.timeout_add(1000, self.update_preview)
+        if camera_ok:
+            GLib.timeout_add(1000, self.update_preview)
+        else:
+            self.grid_btn.set_sensitive(False)
+            self.hflip_btn.set_sensitive(False)
+            self.vflip_btn.set_sensitive(False)
+            self.timer_btn.set_sensitive(False)
 
     #==========================================================================
     #SECTION                        MISC FNs
@@ -197,48 +203,45 @@ class RPiCameraActivity(activity.Activity):
         return stride, scale
 
     def on_draw(self, widget, cr):
-        if camera_ok:
-            array = self.picam2.capture_array()
+        array = self.picam2.capture_array()
 
-            height, width, channels = array.shape
-            stride, scale = self.calculate_stride_and_scale(width,
-                                                            height,
-                                                            widget)
+        height, width, channels = array.shape
+        stride, scale = self.calculate_stride_and_scale(width,
+                                                        height,
+                                                        widget)
 
-            if array.nbytes < stride * height:
-                array = np.pad(array, ((0, 0), (0, 0), (0, 1)), 'constant',
-                               constant_values=0)
+        if array.nbytes < stride * height:
+            array = np.pad(array, ((0, 0), (0, 0), (0, 1)), 'constant',
+                           constant_values=0)
 
-            img_surface = cairo.ImageSurface.create_for_data(
-                array, cairo.FORMAT_RGB24,
-                width, height, stride)
+        img_surface = cairo.ImageSurface.create_for_data(
+            array, cairo.FORMAT_RGB24,
+            width, height, stride)
 
-            cr.scale(scale, scale)
-            cr.set_source_surface(img_surface, 0, 0)
-            cr.paint()
+        cr.scale(scale, scale)
+        cr.set_source_surface(img_surface, 0, 0)
+        cr.paint()
 
-            # draw 3x3 grid
-            if getattr(self, 'draw_grid', False):
-                x_spacing = width / 3
-                y_spacing = height / 3
+        # draw 3x3 grid
+        if getattr(self, 'draw_grid', False):
+            x_spacing = width / 3
+            y_spacing = height / 3
 
-                # Set the color and line width for the grid lines
-                cr.set_source_rgb(0, 0, 0)  # Black color
-                cr.set_line_width(1)
+            # Set the color and line width for the grid lines
+            cr.set_source_rgb(0, 0, 0)  # Black color
+            cr.set_line_width(1)
 
-                # Draw vertical lines
-                for i in range(1, 3):
-                    cr.move_to(x_spacing * i, 0)
-                    cr.line_to(x_spacing * i, height)
-                    cr.stroke()
+            # Draw vertical lines
+            for i in range(1, 3):
+                cr.move_to(x_spacing * i, 0)
+                cr.line_to(x_spacing * i, height)
+                cr.stroke()
 
-                # Draw horizontal lines
-                for i in range(1, 3):
-                    cr.move_to(0, y_spacing * i)
-                    cr.line_to(width, y_spacing * i)
-                    cr.stroke()
-        else:
-            self.overlay_icon(icon_name='no_cam')
+            # Draw horizontal lines
+            for i in range(1, 3):
+                cr.move_to(0, y_spacing * i)
+                cr.line_to(width, y_spacing * i)
+                cr.stroke()
 
     def overlay_icon(self, icon_name, hide=False):
         if hide:
@@ -358,37 +361,7 @@ class RPiCameraActivity(activity.Activity):
     def cameraHomeScreen(self):
         cam_window = Gtk.ScrolledWindow()
         mainVbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        secVbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        if camera_ok: secVbox.set_margin_left(80)
         mainVbox.set_margin_bottom(10)
-
-        self.rec_off_icon = Gtk.Image.new_from_file("icons/rec-off.svg")
-        self.rec_on_icon = Gtk.Image.new_from_file("icons/rec-on.svg")
-        pic_icon = Gtk.Image.new_from_file("icons/snap.svg")
-
-        self.vid_btn = Gtk.ToggleButton()
-        self.vid_btn.set_image(self.rec_off_icon)
-        self.vid_btn.connect('toggled', self.record_video)
-        pic_btn = Gtk.ToggleButton()
-        pic_btn.set_image(pic_icon)
-        pic_btn.connect('clicked', self.capture_image)
-
-        cam_window.add(mainVbox)
-        cam_window.set_policy(
-            hscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
-            vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
-        )
-        mainVbox.pack_start(secVbox, True, True, 0)
-
-        # Drawing Area (camera preview)
-        self.drawing_area = Gtk.DrawingArea()
-        self.drawing_area.connect("draw", self.on_draw)
-
-        # Add overlay
-        self.overlay = Gtk.Overlay()
-        # Add the drawing area to the last layer of the overlay
-        self.overlay.add(self.drawing_area)
-        secVbox.pack_start(self.overlay, True, True, 0)
 
         # Life is boring without some css
         css = """
@@ -416,6 +389,13 @@ class RPiCameraActivity(activity.Activity):
             margin-right: 10px;
         }
 
+        .error-frame {
+            background-color: white;
+            border-radius: 15px;
+            border: 2px solid black;
+            padding: 10px;
+        }
+
         button {
         background: none;
         border: none;
@@ -430,27 +410,78 @@ class RPiCameraActivity(activity.Activity):
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
 
-        # Snap/Vid Button container
-        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        hbox.set_halign(Gtk.Align.CENTER)
-        hbox.set_valign(Gtk.Align.END)
-        hbox.get_style_context().add_class('action-button-bar')
-        hbox.pack_start(pic_btn, False, False, 0)
-        hbox.pack_start(self.vid_btn, False, False, 0)
+        cam_window.add(mainVbox)
+        cam_window.set_policy(
+            hscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+            vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+        )
 
-        # Recording time overlay
-        self.rec_overlay = Gtk.Label()
-        self.overlay.add_overlay(self.rec_overlay)
-        self.rec_overlay.set_halign(Gtk.Align.START)
-        self.rec_overlay.set_valign(Gtk.Align.START)
+        # Show error if camera is not working/something is broken
+        if not camera_ok:
+            err_frame = Gtk.Box()
+            # err_frame.set_shadow_type(Gtk.ShadowType.NONE)
+            err = Gtk.Label()
+            warning_sign = '\u26A0'
+            err.set_markup(f'<span color="#ff9a9a" size="xx-large">\
+{warning_sign} Uh-Oh! There is some error with your camera</span>')
+            err_frame.get_style_context().add_class('error-frame')
+            err_frame.add(err)
+            err_frame.set_halign(Gtk.Align.CENTER)
+            mainVbox.set_valign(Gtk.Align.CENTER)
+            err.show()
+            mainVbox.pack_start(err_frame, False, False, 0)
+            # TODO: Make it like a pop-up
+            # TODO: Add a cross button which closes the activity
+            # TODO: Add a refresh button to restart the activity & check again
 
-        self.overlay.add_overlay(hbox)
-        self.overlay.show_all()
+        # Everything is fine
+        else:
+            secVbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            mainVbox.pack_start(secVbox, True, True, 0)
+            secVbox.set_margin_left(80)
+
+            self.rec_off_icon = Gtk.Image.new_from_file("icons/rec-off.svg")
+            self.rec_on_icon = Gtk.Image.new_from_file("icons/rec-on.svg")
+            pic_icon = Gtk.Image.new_from_file("icons/snap.svg")
+
+            self.vid_btn = Gtk.ToggleButton()
+            self.vid_btn.set_image(self.rec_off_icon)
+            self.vid_btn.connect('toggled', self.record_video)
+            pic_btn = Gtk.ToggleButton()
+            pic_btn.set_image(pic_icon)
+            pic_btn.connect('clicked', self.capture_image)
+
+            # Drawing Area (camera preview)
+            self.drawing_area = Gtk.DrawingArea()
+            self.drawing_area.connect("draw", self.on_draw)
+
+            # Add overlay
+            self.overlay = Gtk.Overlay()
+            # Add the drawing area to the last layer of the overlay
+            self.overlay.add(self.drawing_area)
+            secVbox.pack_start(self.overlay, True, True, 0)
+
+            # Snap/Vid Button container
+            hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            hbox.set_halign(Gtk.Align.CENTER)
+            hbox.set_valign(Gtk.Align.END)
+            hbox.get_style_context().add_class('action-button-bar')
+            hbox.pack_start(pic_btn, False, False, 0)
+            hbox.pack_start(self.vid_btn, False, False, 0)
+
+            # Recording time overlay
+            self.rec_overlay = Gtk.Label()
+            self.overlay.add_overlay(self.rec_overlay)
+            self.rec_overlay.set_halign(Gtk.Align.START)
+            self.rec_overlay.set_valign(Gtk.Align.START)
+
+            self.overlay.add_overlay(hbox)
+            self.overlay.show_all()
+            secVbox.show_all()
+            self.start_camera_preview()
 
         mainVbox.show_all()
-        secVbox.show_all()
         cam_window.show()
-        if camera_ok: self.start_camera_preview()
 
         return cam_window
 
