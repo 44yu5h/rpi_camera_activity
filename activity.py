@@ -72,6 +72,11 @@ class RPiCameraActivity(activity.Activity):
         self.toolbar_box.toolbar.insert(separator, -1)
         separator.show()
 
+        # dark/light mode button
+        self.dark_mode_btn = self.create_toolbar_btn('dark-mode',
+                                                     'Dark/Light Mode',
+                                                     self.set_canvas_color)
+
         stop_button = StopButton(self)
         self.toolbar_box.toolbar.insert(stop_button, -1)
         stop_button.show()
@@ -80,10 +85,7 @@ class RPiCameraActivity(activity.Activity):
         self.show_all()
 
         self.set_canvas(self.cameraHomeScreen())
-        canvas = self.get_canvas()
-        bg_color = Gdk.RGBA()
-        bg_color.parse("#1C1C1C")
-        canvas.override_background_color(Gtk.StateType.NORMAL, bg_color)
+        self.dark_mode_btn.set_active(True)
 
         if camera_ok: GLib.timeout_add(1000, self.update_preview)
 
@@ -94,6 +96,15 @@ class RPiCameraActivity(activity.Activity):
     def get_screen_size(self):
         self.screen_width = Gdk.Screen.get_default().get_width()
         self.screen_height = Gdk.Screen.get_default().get_height()
+
+    def set_canvas_color(self, b):
+        self.dark_mode_btn.set_image(self._icon('dark-mode' if b.get_active()
+                                     else 'light-mode'))
+        canvas = self.get_canvas()
+        bg_color = Gdk.RGBA()
+        bg_color.parse('#1C1C1C' if b.get_active()
+                       else '#F1F1F1')
+        canvas.override_background_color(Gtk.StateType.NORMAL, bg_color)
 
     def create_toolbar_btn(self, icon, tooltip, callback):
         button = Gtk.ToggleButton()
@@ -354,7 +365,7 @@ class RPiCameraActivity(activity.Activity):
         self.rec_off_icon = Gtk.Image.new_from_file("icons/rec-off.svg")
         self.rec_on_icon = Gtk.Image.new_from_file("icons/rec-on.svg")
         pic_icon = Gtk.Image.new_from_file("icons/snap.svg")
-        
+
         self.vid_btn = Gtk.ToggleButton()
         self.vid_btn.set_image(self.rec_off_icon)
         self.vid_btn.connect('toggled', self.record_video)
@@ -398,7 +409,7 @@ class RPiCameraActivity(activity.Activity):
             padding-left: 10px;
             padding-right: 10px;
         }
-        
+
         .timer_toolbar_button {
             padding: 3px;
             margin-left: 10px;
@@ -432,9 +443,8 @@ class RPiCameraActivity(activity.Activity):
         self.overlay.add_overlay(self.rec_overlay)
         self.rec_overlay.set_halign(Gtk.Align.START)
         self.rec_overlay.set_valign(Gtk.Align.START)
-        
-        self.overlay.add_overlay(hbox)
 
+        self.overlay.add_overlay(hbox)
         self.overlay.show_all()
 
         mainVbox.show_all()
