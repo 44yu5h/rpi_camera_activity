@@ -166,18 +166,23 @@ class RPiCameraActivity(activity.Activity):
     #SECTION                     Camera operations
     #==========================================================================
     def start_camera_preview(self):
+        try:
         #* Initialize Camera
-        self.picam2 = Picamera2()
-        if not hasattr(self, 'preview_config'):
-            self.preview_config = self.picam2.create_preview_configuration({
+           self.picam2 = Picamera2()
+           if not hasattr(self, 'preview_config'):
+              self.preview_config = self.picam2.create_preview_configuration({
                 'size': self._size,
                 'format': self._format},
                 transform=Transform(hflip=self._hflip, vflip=self._vflip))
-        self.picam2.configure(self.preview_config)
-        self.picam2.start()
+           self.picam2.configure(self.preview_config)
+           self.picam2.start()
 
         # Update the preview continuously: 30ms
-        GLib.timeout_add(30, self.update_preview)
+           GLib.timeout_add(30, self.update_preview)
+
+        except Exception as e:
+          self.show_error_message("Failed to initialize the camera. Please check your connection.")
+          print(f"Error starting camera preview: {e}")
 
     def update_config(self):
         config = self.picam2.create_preview_configuration({
@@ -190,8 +195,26 @@ class RPiCameraActivity(activity.Activity):
         print('changed preview config')
 
     def update_preview(self):
-        self.drawing_area.queue_draw()
+        if hasattr(self, 'picam2'):
+             try:
+                self.drawing_area.queue_draw()
+             except Exception as e:
+                self.show_error_message("Error updating preview.")
+                print(f"Error updating preview: {e}")
         return True
+    
+    def show_error_message(self, message):
+    # Create an error dialog
+        dialog = Gtk.MessageDialog(
+            parent=self,
+            flags=Gtk.DialogFlags.MODAL,
+            type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK,
+            message_format=message
+        )
+        dialog.run()
+        dialog.destroy()
+
 
     def calculate_stride_and_scale(self, width, height, widget):
         stride = cairo.ImageSurface.format_stride_for_width(cairo.FORMAT_RGB24,
